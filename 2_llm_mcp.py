@@ -140,33 +140,32 @@ class LLMPlannerAgent(BaseAgent):
             # Call LLM and parse response
 
             disease = response_parsed.primary
+            routes = response_parsed.routes
 
             # store triage decision in model context
             triage_log = {
                 "PatientID": pid,
-                "routes": response_parsed.routes,
+                "routes": routes,
                 "primary": disease,
                 "labels": payload["labels"]
             }
             self.model.triage_log.append(triage_log)
 
-
-            if disease in list(payload["data"].keys()):
-            for disease in :
-                
-                task_id = f"task_{disease}_{pid}"
-                task = {
-                    "id": pid, 
-                    "description": 
-                    f"Analyze {disease} data", 
-                    "data": payload["data"][disease],
-                    "triage": triage_log
-                }
-                self.model.context[task_id] = task
-                print(task)
-                print(f"[{self.role}] Planned task {task_id}")
-            else:
-                remaining.append(case)
+            for disease in routes:
+                if disease in list(payload["data"].keys()):
+                    task_id = f"task_{disease}_{pid}"
+                    task = {
+                        "id": pid, 
+                        "description": 
+                        f"Analyze {disease} data", 
+                        "data": payload["data"][disease],
+                        "triage": triage_log
+                    }
+                    self.model.context[task_id] = task
+                    print(task["triage"])
+                    print(f"[{self.role}] Planned task {task_id}")
+                else:
+                    remaining.append(case)
 
             # Route to appropriate executors based on LLM decision
             
