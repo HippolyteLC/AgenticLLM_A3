@@ -13,7 +13,7 @@ import re
 
 from openai import OpenAI
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 warnings.filterwarnings("ignore")
 
@@ -26,11 +26,16 @@ client = OpenAI(
 
 MODEL = "Llama-3.2-3B-Instruct-Q4_K_M:latest"
 
+class Confidence(BaseModel):
+    score: float = Field(ge=0, le=1)
+
 class TriageAnalysis(BaseModel):
     routes: list[str]
     primary: str
     confidence: dict[str, float]
     notes: str
+
+
 
 def call_llm_fn(prompt: str) -> str:
     # Replace with your actual OpenAI/LLM client call.
@@ -44,14 +49,6 @@ def call_llm_fn(prompt: str) -> str:
         response_format=TriageAnalysis,
     )
     return response.choices[0].message.parsed
-
-    return """{
-  "routes": ["diabetes", "heart"],
-  "primary": "heart",
-  "confidence": {"diabetes": 0.35, "heart": 0.72, "breast_cancer": 0.05},
-  "notes": "Brief triage rationale."
-}"""
-
 
 def make_case_text(pid, d_row, b_row, h_row):
     # d_row, b_row, h_row are 1D arrays (same as you pass to models)
@@ -151,21 +148,22 @@ class LLMPlannerAgent(BaseAgent):
             }
             self.model.triage_log.append(triage_log)
 
-            for disease in routes:
-                if disease in list(payload["data"].keys()):
-                    task_id = f"task_{disease}_{pid}"
-                    task = {
-                        "id": pid, 
-                        "description": 
-                        f"Analyze {disease} data", 
-                        "data": payload["data"][disease],
-                        "triage": triage_log
-                    }
-                    self.model.context[task_id] = task
-                    print(task["triage"])
-                    print(f"[{self.role}] Planned task {task_id}")
-                else:
-                    remaining.append(case)
+            # for disease in routes:
+            if disease in list(payload["data"].keys()):
+                task_id = f"task_{disease}_{pid}"
+                task = {
+                    "id": pid, 
+                    "description": 
+                    f"Analyze {disease} data", 
+                    "data": payload["data"][disease],
+                    "triage": triage_log, 
+                    "y_true": payload["labels"][disease]
+                }
+                self.model.context[task_id] = task
+                # print(task["triage"])
+                print(f"[{self.role}] Planned task {task_id}")
+            else:
+                remaining.append(case)
 
             # Route to appropriate executors based on LLM decision
             
@@ -234,7 +232,8 @@ class MCPMesaModel:
         self.triage_log = []
 
         # Add cases to queue (patients)
-        for _ in range(4):
+        n=100
+        for _ in range(n):
             pid = str(uuid.uuid4().int)[:4]
             idx_d = X_d.sample(1).index[0]
             d_row = X_d.loc[idx_d].values
@@ -352,7 +351,17 @@ for disease in results_df["Disease"].unique():
 
 
 # Analyse the triage performance
-
+triage_data = []
+for log in model.triage_log:
+    for dis, label in log["labels"].items():
+        pred = 1 if dis in log["routes"] else 0
+        triage_data.append({"Disease": dis, "y_true": label, "y_pred": pred})
+triage_df = pd.DataFrame(triage_data)
+for disease in triage_df["Disease"].unique():
+    sub = triage_df[triage_df["Disease"] == disease]
+    print(f"\n=== Triage Performance ({disease}) ===")
+    print(classification_report(sub["y_true"], sub["y_pred"], digits=3))
+    
 triage_df = pd.DataFrame(model.triage_log)
 print("Triage Collected:", len(triage_df))
 print(triage_df.head())
