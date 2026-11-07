@@ -11,11 +11,40 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, classifica
 import json
 import re
 
+from openai import OpenAI
+
+from pydantic import BaseModel
+
 warnings.filterwarnings("ignore")
+
+BASE_URL = "http://localhost:11434/v1"
+
+client = OpenAI(
+    base_url=BASE_URL,
+    api_key="EMPTY",
+)
+
+MODEL = "Llama-3.2-3B-Instruct-Q4_K_M:latest"
+
+class TriageAnalysis(BaseModel):
+    routes: list[str]
+    primary: str
+    confidence: dict[str, float]
+    notes: str
 
 def call_llm_fn(prompt: str) -> str:
     # Replace with your actual OpenAI/LLM client call.
     # Must return raw text from the model. This is just a placeholder (that allows you to run the code).
+
+    response = client.chat.completions.parse(
+        model=MODEL,
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        response_format=TriageAnalysis,
+    )
+    return response.choices[0].message.parsed
+
     return """{
   "routes": ["diabetes", "heart"],
   "primary": "heart",
@@ -104,18 +133,43 @@ class LLMPlannerAgent(BaseAgent):
             pid, payload = case  # payload is dict with data per domain + text
             prompt = payload["text"]
 
+            response_parsed = call_llm_fn(prompt=prompt)
+            # print("="*30)
+            # print(response_parsed)
+            # print("="*30)
             # Call LLM and parse response
 
+            disease = response_parsed.primary
+
             # store triage decision in model context
-            # self.model.triage_log.append({
-            #         "PatientID": pid,
-            #         "routes": routes,
-            #         "primary": primary_decision,
-            #         "labels": payload["labels"]
-            #     })
+            triage_log = {
+                "PatientID": pid,
+                "routes": response_parsed.routes,
+                "primary": disease,
+                "labels": payload["labels"]
+            }
+            self.model.triage_log.append(triage_log)
+
+
+            if disease in list(payload["data"].keys()):
+            for disease in :
+                
+                task_id = f"task_{disease}_{pid}"
+                task = {
+                    "id": pid, 
+                    "description": 
+                    f"Analyze {disease} data", 
+                    "data": payload["data"][disease],
+                    "triage": triage_log
+                }
+                self.model.context[task_id] = task
+                print(task)
+                print(f"[{self.role}] Planned task {task_id}")
+            else:
+                remaining.append(case)
 
             # Route to appropriate executors based on LLM decision
-
+            
         self.model.case_queue = remaining
 
 class PlannerAgent(BaseAgent):
@@ -181,7 +235,7 @@ class MCPMesaModel:
         self.triage_log = []
 
         # Add cases to queue (patients)
-        for _ in range(100):
+        for _ in range(4):
             pid = str(uuid.uuid4().int)[:4]
             idx_d = X_d.sample(1).index[0]
             d_row = X_d.loc[idx_d].values
@@ -264,7 +318,38 @@ results_df = pd.DataFrame(model.results)
 print("Results Collected:", len(results_df))
 print(results_df.head())
 
+if not results_df.empty and "Disease" in results_df.columns and "y_pred" in results_df.columns:
+    plt.figure(figsize=(10, 6))
+    sns.countplot(data=results_df, x="Disease", hue="y_pred")
+    plt.title("Predictions by Disease Type")
+    plt.ylabel("Number of Cases")
+    plt.xlabel("Disease")
+    plt.legend(title="Prediction", labels=["Negative", "Positive"])
+    plt.tight_layout()
+    plt.savefig("results/output.png")
+else:
+    print("No results to display.")
 
+
+for disease in results_df["Disease"].unique():
+    sub = results_df[results_df["Disease"] == disease].dropna(subset=["y_true", "y_pred"])
+    if sub.empty:
+        print(f"\n--- {disease}: no labeled results ---")
+        continue
+
+    y_true = sub["y_true"].astype(int).values
+    y_pred = sub["y_pred"].astype(int).values
+
+    print(f"\n=== {disease} ===")
+    print(classification_report(y_true, y_pred, digits=3))
+
+    cm = confusion_matrix(y_true, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    disp.plot()
+    plt.title(f"Confusion matrix: {disease}")
+    plt.tight_layout()
+    plt.savefig(f"results/confusion_{disease}.png")
+    plt.close()
 
 
 # Analyse the triage performance
